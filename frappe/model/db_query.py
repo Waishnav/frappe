@@ -330,17 +330,53 @@ class DatabaseQuery:
 		return args
 
 	def prepare_select_args(self, args):
-		order_field = ORDER_BY_PATTERN.sub("", args.order_by)
+		order_by = args.order_by.strip()
 
-		if order_field not in args.fields:
-			extracted_column = order_column = order_field.replace("`", "")
-			if "." in extracted_column:
-				extracted_column = extracted_column.split(".")[1]
+		# drop leading "order by" if present (args.order_by often includes it)
+		lower = order_by.lower()
+		if lower.startswith("order by "):
+			order_by = order_by[9:].strip()
 
-			args.fields += f", MAX({extracted_column}) as `{order_column}`"
-			args.order_by = args.order_by.replace(order_field, f"`{order_column}`")
+		clauses = [c.strip() for c in order_by.split(",") if c.strip()]
+		new_clauses = []
 
-		return args
+		for clause in clauses:
+			# remove direction keywords only from this clause
+			# example: "`tabTask`.planned_start asc" -> "`tabTask`.planned_start"
+			bare_field = ORDER_BY_PATTERN.sub("", clause).strip()
+
+			# if field is not present in select, add an aggregated select + alias,
+			# and rewrite this clause to use the alias so PG group_by is satisfied.
+			if bare_field and bare_field not in args.fields:
+				# build alias like: `tabTask.planned_start`
+				order_column = bare_field.replace("`", "")
+				# aggregation input must be fully qualified to avoid ambiguity on Postgres
+				if "." in order_column:
+					tbl, col = order_column.split(".", 1)
+					extracted_qualified = f"`{tbl}`.`{col}`"
+				else:
+					extracted_qualified = f"`{order_column}`"
+
+				args.fields += f", MAX({extracted_qualified}) as `{order_column}`"
+				clause = clause.replace(bare_field, f"`{order_column}`")
+
+			new_clauses.append(clause)
+
+		args.order_by = " order by " + ", ".join(new_clauses)
+		return args	
+
+	# def prepare_select_args(self, args):
+	# 	order_field = ORDER_BY_PATTERN.sub("", args.order_by)
+
+	# 	if order_field not in args.fields:
+	# 		extracted_column = order_column = order_field.replace("`", "")
+	# 		if "." in extracted_column:
+	# 			extracted_column = extracted_column.split(".")[1]
+
+	# 		args.fields += f", MAX({extracted_column}) as `{order_column}`"
+	# 		args.order_by = args.order_by.replace(order_field, f"`{order_column}`")
+
+	# 	return args
 
 	def parse_args(self):
 		"""Convert fields and filters from strings to list, dicts."""

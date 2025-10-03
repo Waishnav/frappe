@@ -58,16 +58,22 @@ def get_count() -> int | None:
 		return frappe.call(controller.get_count, args=args, **args)
 
 	args.distinct = sbool(args.distinct)
-	distinct = "distinct " if args.distinct else ""
 	args.limit = cint(args.limit)
-	fieldname = f"{distinct}`tab{args.doctype}`.name"
+	fieldname = f"`tab{args.doctype}`.name"
 	args.order_by = None
 
 	# args.limit is specified to avoid getting accurate count.
 	if not args.limit:
-		args.fields = [f"count({fieldname}) as total_count"]
+		# Accurate count path
+		# Use count(distinct ...) when distinct is requested; else plain count
+		if args.distinct:
+			args.fields = [f"count(distinct {fieldname}) as total_count"]
+		else:
+			args.fields = [f"count({fieldname}) as total_count"]
 		return execute(**args)[0].get("total_count")
 
+	# Limited count path: build a distinct-select (if requested) and wrap in outer count(*)
+	# Do not embed "distinct" in fieldname here; rely on args.distinct to avoid duplication
 	args.fields = [fieldname]
 	partial_query = execute(**args, run=0)
 
