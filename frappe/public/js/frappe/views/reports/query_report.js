@@ -524,9 +524,20 @@ frappe.views.QueryReport = class QueryReport extends frappe.views.BaseList {
 		return out;
 	}
 
-	setup_filters() {
+	async setup_filters() {
 		this.clear_filters();
 		const { filters = [] } = this.report_settings;
+
+		// Preload child doctypes for Table MultiSelect filters so control can access meta.
+		const tableMultiDoctypes = (filters || [])
+			.filter((df) => df.fieldtype === "Table MultiSelect" && df.options)
+			.map((df) => df.options)
+			.filter(Boolean);
+
+		if (tableMultiDoctypes.length) {
+			const uniqueDoctypes = Array.from(new Set(tableMultiDoctypes));
+			await Promise.all(uniqueDoctypes.map((dt) => frappe.model.with_doctype(dt)));
+		}
 
 		let filter_area = this.page.page_form;
 
@@ -571,6 +582,32 @@ frappe.views.QueryReport = class QueryReport extends frappe.views.BaseList {
 				};
 
 				f = Object.assign(f, df);
+
+			// Allow per-filter width control from df.filter_width (number of bootstrap cols)
+			try {
+				let width_cols = null;
+				if (Number.isFinite(Number(df.filter_width))) {
+					width_cols = Math.min(Math.max(parseInt(df.filter_width, 10) || 0, 1), 12);
+				} else if (df.input_class && String(df.input_class).split(/\s+/).includes("double-width")) {
+					// backward compatible: double-width -> 4 cols (was previously col-md-4)
+					width_cols = 4;
+				} else if (df.fieldtype === "Table MultiSelect") {
+					// default for Table MultiSelect if nothing specified
+					width_cols = 4;
+				}
+
+				if (width_cols && f && f.wrapper) {
+					// remove any existing col-md-* class (simple heuristic)
+					$(f.wrapper).removeClass(function (index, className) {
+						return (className.match(/col-md-\d+/g) || []).join(' ');
+					});
+					$(f.wrapper).addClass("col-md-" + String(width_cols));
+					// ensure input uses full width
+					try { f.$input && f.$input.css && f.$input.css("min-width", "100%"); } catch (e) {}
+				}
+			} catch (e) {
+				// ignore failures here, non-critical UI tweak
+			}
 
 				return f;
 			})

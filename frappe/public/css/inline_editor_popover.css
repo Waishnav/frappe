@@ -1,0 +1,88 @@
+/* Inline Editor Popover Styles */
+
+.frappe-inline-editor-overlay {
+	position: fixed;
+	inset: 0;
+	background-color: rgba(0, 0, 0, 0.2);
+	z-index: 1050;
+	display: none;
+}
+
+.frappe-inline-editor-popup {
+	position: absolute;
+	background: white;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md);
+	box-shadow: var(--shadow-lg);
+	min-width: 300px;
+	max-width: 500px;
+	max-height: 80vh;
+	overflow: auto;
+	z-index: 1051;
+}
+
+.inline-editor-header {
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--border-color);
+	font-weight: 600;
+	font-size: 14px;
+	color: var(--text-color);
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+}
+
+.inline-editor-body {
+	padding: 16px;
+}
+
+.inline-editor-body .frappe-control {
+	margin-bottom: 0;
+}
+
+.inline-editor-footer {
+	padding: 12px 16px;
+	border-top: 1px solid var(--border-color);
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+/* Table MultiSelect Pills in Report View */
+.table-multiselect-pill {
+	padding: 2px 8px;
+	border-radius: 4px;
+	background-color: var(--bg-light-gray);
+	color: var(--text-color);
+	font-size: 12px;
+	display: inline-block;
+	cursor: pointer;
+	transition: background-color 0.2s;
+}
+
+.table-multiselect-pill.empty {
+	color: var(--text-muted);
+	border: 1px dashed var(--border-color);
+	background-color: transparent;
+}
+
+.table-multiselect-pill:hover {
+	background-color: var(--bg-gray);
+}
+
+/* Make cells clickable */
+.report-view .dt-cell {
+	cursor: pointer;
+}
+
+.report-view .dt-cell:hover {
+	background-color: var(--bg-light-gray);
+}
+
+/* Disabled state for read-only popover */
+.inline-editor-body.disabled,
+.inline-editor-body .disabled {
+	opacity: 0.6;
+	pointer-events: none;
+}
+

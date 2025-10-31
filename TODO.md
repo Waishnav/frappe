@@ -1,0 +1,13 @@
+## What Frappe frameworks missing features are?
+- [ ] Dialog option to view Form View instead of Form View route
+- [ ] Scroll through script report's specific line using number
+- [ ] Sidebar should prefer user's default app or current application's sidebar view not the largest sidebar
+- [ ] Making Default Report View of every Doctypes editable similar like notion's table view (Input Control Field API in client side along with Custom Inline Popop implementation)
+- [ ] Script report making column pinned i.e sticky during horrizontal scrolls
+- [ ] List View virtualization
+- [ ] Kanban View Virtualization
+- [ ] Tooltip client Side API just like dialog API
+- [ ] Table MultiSelect improvements
+- [ ] List View lots of configurations can we added
+    - [ ] disable like and comment
+    - [ ] initial load element in pagination

@@ -28,30 +28,46 @@ frappe.ui.form.ControlTableMultiSelect = class ControlTableMultiSelect extends (
 
 			const value = decodeURIComponent($value.data().value);
 			const link_field = this.get_link_field();
-			this.rows = this.rows.filter((row) => {
-				if (row[link_field.fieldname] !== value) {
-					return row;
-				} else {
-					frappe.run_serially([
-						() => {
-							return this.frm.script_manager.trigger(
-								`before_${this.df.fieldname}_remove`,
-								this.df.options,
-								row.name
-							);
-						},
-						() => {
-							this.parse_validate_and_set_in_model("");
 
-							return this.frm.script_manager.trigger(
-								`${this.df.fieldname}_remove`,
-								this.df.options,
-								row.name
-							);
-						},
-					]);
-				}
-			});
+			// If control is bound to a form (child table), preserve existing behaviour
+			if (this.frm) {
+				this.rows = this.rows.filter((row) => {
+					if (row[link_field.fieldname] !== value) {
+						return row;
+					} else {
+						frappe.run_serially([
+							() => {
+								return this.frm.script_manager.trigger(
+									`before_${this.df.fieldname}_remove`,
+									this.df.options,
+									row.name
+								);
+							},
+							() => {
+								this.parse_validate_and_set_in_model("");
+								return this.frm.script_manager.trigger(
+									`${this.df.fieldname}_remove`,
+									this.df.options,
+									row.name
+								);
+							},
+						]);
+					}
+				});
+			} else {
+				// When used outside a form (e.g. report filter area), update local rows and UI
+				this.rows = (this.rows || []).filter((row) => row[link_field.fieldname] !== value);
+				try {
+					// keep internal awesomplete/rows list in sync
+					this._rows_list = (this.rows || []).map((r) => r[link_field.fieldname]);
+					// re-render pills
+					this.set_input(this.rows);
+					// trigger df-level onchange if provided
+					if (this.df.change || this.df.onchange) {
+						try { (this.df.change || this.df.onchange).apply(this); } catch (e) { /* ignore */ }
+					}
+				} catch (e) { /* silent */ }
+			}
 		});
 		this.$input_area.on("click", ".btn-link-to-form", (e) => {
 			const $target = $(e.currentTarget);
