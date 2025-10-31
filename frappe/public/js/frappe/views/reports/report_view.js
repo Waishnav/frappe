@@ -5,6 +5,7 @@ import DataTable from "frappe-datatable";
 
 window.DataTable = DataTable;
 frappe.provide("frappe.views");
+frappe.provide("frappe.ui");
 
 frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 	get view_name() {
@@ -333,7 +334,6 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 		this.datatable = new DataTable(this.$datatable_wrapper[0], {
 			columns: this.columns,
 			data: this.get_data(values),
-			getEditor: this.get_editing_object.bind(this),
 			language: frappe.boot.lang,
 			translations: frappe.utils.datatable.get_translations(),
 			checkboxColumn: true,
@@ -428,6 +428,138 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 				},
 			],
 		});
+
+		// Setup inline popup editor for cell clicks
+		this.setup_inline_editor();
+	}
+
+	setup_inline_editor() {
+		// Initialize the inline editor popover if not already created
+		if (!this.inline_editor) {
+			this.inline_editor = new frappe.ui.InlineEditorPopover();
+		}
+
+		// Wait for datatable to render, then attach click handlers
+		setTimeout(() => {
+			this.attach_cell_click_handlers();
+		}, 100);
+	}
+
+	attach_cell_click_handlers() {
+		if (!this.datatable) return;
+
+		// Find all data cells in the datatable
+		const $cells = this.$datatable_wrapper.find('.dt-cell__content');
+		
+		$cells.each((index, cellContent) => {
+			const $cellContent = $(cellContent);
+			const $cell = $cellContent.closest('.dt-cell');
+			
+			if (!$cell.length) return;
+
+			// Get row and column indices
+			const rowIndex = $cell.attr('data-row-index');
+			const colIndex = $cell.attr('data-col-index');
+			
+			if (rowIndex === undefined || colIndex === undefined) return;
+
+			const column = this.datatable.getColumn(parseInt(colIndex));
+			if (!column || !column.docfield) return;
+
+			// Get the data for this row
+			const rowData = this.data[parseInt(rowIndex)];
+			if (!rowData) return;
+
+			// Determine if this cell is editable or viewable
+			const canWrite = this.is_editable(column.docfield, rowData);
+			const canView = !canWrite; // If not editable, we still show in read-only mode
+
+			// Only attach handler if user can at least view
+			if (canWrite || canView) {
+				// Remove any existing click handler to avoid duplicates
+				$cell.off('click.inline-editor');
+				
+				// Attach click handler on the cell element itself
+				$cell.on('click.inline-editor', (e) => {
+					// Prevent if clicking on checkbox or other interactive elements
+					if ($(e.target).closest('.dt-checkbox').length) return;
+					
+					this.open_inline_editor_for_cell(rowData, column, $cell[0], canWrite);
+				});
+			}
+		});
+	}
+
+	open_inline_editor_for_cell(rowData, column, cellElement, canWrite) {
+		const fielddef = column.docfield;
+		const fieldname = fielddef.fieldname;
+		const docname = rowData.name;
+		
+		// Get current value
+		let currentValue = rowData[fieldname];
+		
+		// For child table fields
+		if (fielddef.parent !== this.doctype) {
+			const cdt_field = (f) => `${fielddef.parent}:${f}`;
+			currentValue = rowData[cdt_field(fieldname)];
+		}
+
+		this.inline_editor.open({
+			docname: docname,
+			fielddef: fielddef,
+			currentValue: currentValue,
+			cellElement: cellElement,
+			canWrite: canWrite,
+			onSave: (newValue) => {
+				this.save_inline_edit(docname, fielddef, newValue, rowData);
+			},
+		});
+	}
+
+	save_inline_edit(docname, fielddef, newValue, rowData) {
+		const fieldname = fielddef.fieldname;
+		let doctype = fielddef.parent;
+		
+		// For child table fields, we need to get the actual child docname
+		let actualDocname = docname;
+		if (doctype !== this.doctype) {
+			const cdt_name_field = `${doctype}:name`;
+			actualDocname = rowData[cdt_name_field];
+		}
+
+		this.set_control_value(doctype, actualDocname, fieldname, newValue)
+			.then((updated_doc) => {
+				// Update the in-memory data
+				const _data = this.data.find((d) => d.name === docname);
+				
+				if (_data) {
+					if (doctype !== this.doctype) {
+						// child table field
+						const cdt_field = `${doctype}:${fieldname}`;
+						_data[cdt_field] = newValue;
+					} else {
+						_data[fieldname] = newValue;
+					}
+
+					// Find the row index
+					const rowIndex = this.data.indexOf(_data);
+					
+					// Rebuild and refresh just this row
+					const new_row = this.build_row(_data);
+					this.datatable.refreshRow(new_row, rowIndex);
+
+					// Re-attach click handlers after refresh
+					setTimeout(() => {
+						this.attach_cell_click_handlers();
+					}, 50);
+				}
+
+				// Refresh charts if needed
+				this.refresh_charts();
+			})
+			.catch((error) => {
+				frappe.msgprint(__('Failed to save: {0}', [error.message || 'Unknown error']));
+			});
 	}
 
 	toggle_charts() {
@@ -600,63 +732,64 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 		this.chart.update(this.chart_args);
 	}
 
-	get_editing_object(colIndex, rowIndex, value, parent) {
-		const control = this.render_editing_input(colIndex, value, parent);
-		if (!control) return false;
-
-		control.df.change = () => control.set_focus();
-
-		return {
-			initValue: (value) => {
-				return control.set_value(value);
-			},
-			setValue: (value) => {
-				const cell = this.datatable.getCell(colIndex, rowIndex);
-				let fieldname = this.datatable.getColumn(colIndex).docfield.fieldname;
-				let docname = cell.name;
-				let doctype = cell.doctype;
-
-				control.set_value(value);
-				return this.set_control_value(doctype, docname, fieldname, value)
-					.then((updated_doc) => {
-						const _data = this.data
-							.filter((b) => b.name === updated_doc.name)
-							.find(
-								(a) =>
-									// child table cell
-									(doctype != updated_doc.doctype &&
-										a[doctype + ":name"] == docname) ||
-									doctype == updated_doc.doctype
-							);
-
-						for (let field in _data) {
-							if (field.includes(":")) {
-								// child table field
-								const [cdt, _field] = field.split(":");
-								const cdt_row = Object.keys(updated_doc)
-									.filter(
-										(key) =>
-											Array.isArray(updated_doc[key]) &&
-											updated_doc[key].length &&
-											updated_doc[key][0].doctype === cdt
-									)
-									.map((key) => updated_doc[key])[0]
-									.filter((cdoc) => cdoc.name === _data[cdt + ":name"])[0];
-								if (cdt_row) {
-									_data[field] = cdt_row[_field];
-								}
-							} else {
-								_data[field] = updated_doc[field];
-							}
-						}
-					})
-					.then(() => this.refresh_charts());
-			},
-			getValue: () => {
-				return control.get_value();
-			},
-		};
-	}
+	// Old inline editing methods - replaced by inline popup editor
+	// get_editing_object(colIndex, rowIndex, value, parent) {
+	// 	const control = this.render_editing_input(colIndex, value, parent);
+	// 	if (!control) return false;
+	//
+	// 	control.df.change = () => control.set_focus();
+	//
+	// 	return {
+	// 		initValue: (value) => {
+	// 			return control.set_value(value);
+	// 		},
+	// 		setValue: (value) => {
+	// 			const cell = this.datatable.getCell(colIndex, rowIndex);
+	// 			let fieldname = this.datatable.getColumn(colIndex).docfield.fieldname;
+	// 			let docname = cell.name;
+	// 			let doctype = cell.doctype;
+	//
+	// 			control.set_value(value);
+	// 			return this.set_control_value(doctype, docname, fieldname, value)
+	// 				.then((updated_doc) => {
+	// 					const _data = this.data
+	// 						.filter((b) => b.name === updated_doc.name)
+	// 						.find(
+	// 							(a) =>
+	// 								// child table cell
+	// 								(doctype != updated_doc.doctype &&
+	// 									a[doctype + ":name"] == docname) ||
+	// 								doctype == updated_doc.doctype
+	// 						);
+	//
+	// 					for (let field in _data) {
+	// 						if (field.includes(":")) {
+	// 							// child table field
+	// 							const [cdt, _field] = field.split(":");
+	// 							const cdt_row = Object.keys(updated_doc)
+	// 								.filter(
+	// 									(key) =>
+	// 										Array.isArray(updated_doc[key]) &&
+	// 										updated_doc[key].length &&
+	// 										updated_doc[key][0].doctype === cdt
+	// 								)
+	// 								.map((key) => updated_doc[key])[0]
+	// 								.filter((cdoc) => cdoc.name === _data[cdt + ":name"])[0];
+	// 							if (cdt_row) {
+	// 								_data[field] = cdt_row[_field];
+	// 							}
+	// 						} else {
+	// 							_data[field] = updated_doc[field];
+	// 						}
+	// 					}
+	// 				})
+	// 				.then(() => this.refresh_charts());
+	// 		},
+	// 		getValue: () => {
+	// 			return control.get_value();
+	// 		},
+	// 	};
+	// }
 
 	set_control_value(doctype, docname, fieldname, value) {
 		this.last_updated_doc = docname;
@@ -674,38 +807,38 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 		});
 	}
 
-	render_editing_input(colIndex, value, parent) {
-		const col = this.datatable.getColumn(colIndex);
-		let control = null;
-
-		if (col.docfield.fieldtype === "Text Editor") {
-			const d = new frappe.ui.Dialog({
-				title: __("Edit {0}", [col.docfield.label]),
-				fields: [col.docfield],
-				primary_action: () => {
-					this.datatable.cellmanager.deactivateEditing();
-					d.hide();
-				},
-				on_hide: () => {
-					this.datatable.cellmanager.deactivateEditing(false);
-				},
-			});
-			d.show();
-			control = d.fields_dict[col.docfield.fieldname];
-		} else {
-			// make control
-			control = frappe.ui.form.make_control({
-				df: col.docfield,
-				parent: parent,
-				render_input: true,
-			});
-			control.set_value(value);
-			control.toggle_label(false);
-			control.toggle_description(false);
-		}
-
-		return control;
-	}
+	// render_editing_input(colIndex, value, parent) {
+	// 	const col = this.datatable.getColumn(colIndex);
+	// 	let control = null;
+	//
+	// 	if (col.docfield.fieldtype === "Text Editor") {
+	// 		const d = new frappe.ui.Dialog({
+	// 			title: __("Edit {0}", [col.docfield.label]),
+	// 			fields: [col.docfield],
+	// 			primary_action: () => {
+	// 				this.datatable.cellmanager.deactivateEditing();
+	// 				d.hide();
+	// 			},
+	// 			on_hide: () => {
+	// 				this.datatable.cellmanager.deactivateEditing(false);
+	// 			},
+	// 		});
+	// 		d.show();
+	// 		control = d.fields_dict[col.docfield.fieldname];
+	// 	} else {
+	// 		// make control
+	// 		control = frappe.ui.form.make_control({
+	// 			df: col.docfield,
+	// 			parent: parent,
+	// 			render_input: true,
+	// 		});
+	// 		control.set_value(value);
+	// 		control.toggle_label(false);
+	// 		control.toggle_description(false);
+	// 	}
+	//
+	// 	return control;
+	// }
 
 	evaluate_read_only_depends_on(expression, data) {
 		let out = null;
@@ -1144,6 +1277,11 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 		}
 		if (!docfield || docfield.report_hide) return;
 
+		// Skip pure Table fields - they should not be rendered as columns
+		if (docfield.fieldtype === "Table") {
+			return;
+		}
+
 		let title = __(docfield.label, null, docfield.parent);
 		if (doctype !== this.doctype) {
 			title += ` (${__(doctype)})`;
@@ -1218,9 +1356,44 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 					doc = row;
 				}
 
+				// Special formatting for Table MultiSelect fields
+				if (column.docfield.fieldtype === "Table MultiSelect") {
+					return this.format_table_multiselect(value, column.docfield, doc);
+				}
+
 				return frappe.format(value, column.docfield, { always_show_decimals: true }, doc);
 			},
 		};
+	}
+
+	format_table_multiselect(value, df, doc) {
+		// Get the count of selected items
+		const childTable = doc[df.fieldname];
+		let count = 0;
+		
+		if (Array.isArray(childTable)) {
+			count = childTable.length;
+		}
+
+		const label = __(df.label, null, df.parent);
+		let pillText;
+		let pillClass = 'table-multiselect-pill';
+		
+		if (count === 0) {
+			pillText = `+ ${__('Assign')} ${label}`;
+			pillClass += ' empty';
+		} else {
+			pillText = `${count} ${label}(s)`;
+		}
+
+		return `<span class="${pillClass}" style="
+			display: inline-block;
+			padding: 2px 8px;
+			border-radius: 4px;
+			background: var(--bg-light-gray);
+			font-size: 12px;
+			color: var(--text-muted);
+		">${pillText}</span>`;
 	}
 
 	build_rows(data) {
