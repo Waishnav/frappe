@@ -661,12 +661,16 @@ frappe.ui.form.ControlLink = class ControlLink extends frappe.ui.form.ControlDat
 				if (this.layout?.set_value) {
 					this.layout.set_value(target_field, field_value);
 				} else if (this.frm) {
+					// Use the actual target field's type to avoid applying Link-specific
+					// behavior (like forced triggers) on non-Link dependent fields.
+					const target_df = frappe.meta.get_docfield(this.df.parent, target_field, this.docname);
+					const target_fieldtype = target_df ? target_df.fieldtype : undefined;
 					frappe.model.set_value(
 						this.df.parent,
 						this.docname,
 						target_field,
 						field_value,
-						this.df.fieldtype
+						target_fieldtype
 					);
 				}
 			}

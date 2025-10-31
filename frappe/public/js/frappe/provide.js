@@ -35,6 +35,8 @@ frappe.provide("locals.DocType");
 
 // for listviews
 frappe.provide("frappe.listview_settings");
+// for report view per-doctype hooks
+frappe.provide("frappe.reportview_settings");
 frappe.provide("frappe.tour");
 frappe.provide("frappe.listview_parent_route");
 

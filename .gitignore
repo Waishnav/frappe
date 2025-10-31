@@ -198,3 +198,4 @@ cypress/videos
 .helix/
 # Aider AI Chat
 .aider*
+public/dist/
