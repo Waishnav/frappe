@@ -15,6 +15,7 @@ ASSET_KEYS = (
 	"__js",
 	"__css",
 	"__list_js",
+    "__report_js",
 	"__calendar_js",
 	"__map_js",
 	"__linked_with",
@@ -101,8 +102,10 @@ class FormMeta(Meta):
 		if system_country:
 			self._add_code(_get_path(os.path.join("regional", system_country + ".js")), "__js")
 
-		self._add_code(_get_path(self.name + ".css"), "__css")
-		self._add_code(_get_path(self.name + "_list.js"), "__list_js")
+        self._add_code(_get_path(self.name + ".css"), "__css")
+        self._add_code(_get_path(self.name + "_list.js"), "__list_js")
+        # report view specific JS (e.g. <doctype>_report.js)
+        self._add_code(_get_path(self.name + "_report.js"), "__report_js")
 		if system_country:
 			self._add_code(_get_path(os.path.join("regional", system_country + "_list.js")), "__list_js")
 
@@ -113,10 +116,11 @@ class FormMeta(Meta):
 		if os.path.exists(listview_template):
 			self.set("__listview_template", get_html_format(listview_template))
 
-		self.add_code_via_hook("doctype_js", "__js")
-		self.add_code_via_hook("doctype_list_js", "__list_js")
-		self.add_code_via_hook("doctype_tree_js", "__tree_js")
-		self.add_code_via_hook("doctype_calendar_js", "__calendar_js")
+        self.add_code_via_hook("doctype_js", "__js")
+        self.add_code_via_hook("doctype_list_js", "__list_js")
+        self.add_code_via_hook("doctype_report_js", "__report_js")
+        self.add_code_via_hook("doctype_tree_js", "__tree_js")
+        self.add_code_via_hook("doctype_calendar_js", "__calendar_js")
 		self.add_html_templates(path)
 
 	def _add_code(self, path, fieldname):
