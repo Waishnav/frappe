@@ -297,7 +297,8 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 		this.datatable = new DataTable(this.$datatable_wrapper[0], {
 			columns: this.columns,
 			data: this.get_data(values),
-			getEditor: this.get_editing_object.bind(this),
+			// Disable double-click inline editing - replaced with single-click popup editor
+			getEditor: () => false,
 			language: frappe.boot.lang,
 			translations: frappe.utils.datatable.get_translations(),
 			checkboxColumn: true,
@@ -391,6 +392,320 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 					},
 				},
 			],
+		});
+
+		// Setup single-click popup editor
+		this.setup_single_click_editor();
+	}
+
+	setup_single_click_editor() {
+		// Add click handlers to all data cells for single-click popup editing
+		this.$datatable_wrapper.on('click', '.dt-cell:not(.dt-cell--highlight):not(.dt-cell--col-0)', (e) => {
+			const $cell = $(e.currentTarget);
+			const $row = $cell.closest('.dt-row');
+			
+			// Don't handle clicks on checkboxes or headers
+			if ($cell.hasClass('dt-cell--header') || $row.hasClass('dt-row--header') || $row.hasClass('dt-row-filter')) {
+				return;
+			}
+
+			const colIndex = $cell.data('col-index');
+			const rowIndex = $row.data('row-index');
+
+			if (colIndex === undefined || rowIndex === undefined || colIndex === 0) {
+				return;
+			}
+
+			this.open_popup_editor(colIndex, rowIndex, $cell);
+		});
+	}
+
+	open_popup_editor(colIndex, rowIndex, $cell) {
+		const column = this.datatable.getColumn(colIndex);
+		const cell = this.datatable.getCell(colIndex, rowIndex);
+		const data = this.data[rowIndex];
+
+		if (!column || !column.docfield || !data) {
+			return;
+		}
+
+		// Check if field is editable
+		if (!this.is_editable(column.docfield, data)) {
+			// Show read-only popup for users without edit permission
+			this.show_readonly_popup(column, cell, $cell);
+			return;
+		}
+
+		// Close any existing popup
+		if (this.current_popup) {
+			this.close_popup_editor(false);
+		}
+
+		// Get current cell value
+		const fieldname = column.docfield.fieldname;
+		const value = cell.content;
+
+		// Create popup editor
+		this.create_popup_editor(column, data, fieldname, value, $cell, colIndex, rowIndex);
+	}
+
+	create_popup_editor(column, data, fieldname, value, $cell, colIndex, rowIndex) {
+		// Create popup container
+		const $popup = $('<div class="report-inline-popup-editor">');
+		
+		// Create popup header
+		const $header = $(`
+			<div class="popup-header">
+				<span class="popup-title">${__(column.docfield.label || fieldname)}</span>
+				<button class="btn-close" aria-label="Close">&times;</button>
+			</div>
+		`);
+		
+		// Create popup body for the control
+		const $body = $('<div class="popup-body">');
+		
+		// Create popup footer with save button
+		const $footer = $(`
+			<div class="popup-footer">
+				<button class="btn btn-sm btn-primary btn-save">${__("Save")}</button>
+			</div>
+		`);
+		
+		$popup.append($header, $body, $footer);
+		
+		// Add popup to DOM but keep it hidden initially for positioning
+		$('body').append($popup);
+		
+		// Create the control
+		const control = frappe.ui.form.make_control({
+			df: column.docfield,
+			parent: $body[0],
+			render_input: true,
+		});
+		control.set_value(value);
+		control.toggle_label(false);
+		control.toggle_description(false);
+		
+		// Store control reference
+		this.current_control = control;
+		this.current_popup = $popup;
+		this.current_cell = $cell;
+		
+		// Position popup near the cell
+		this.position_popup($popup, $cell);
+		
+		// Show popup
+		$popup.addClass('show');
+		
+		// Add backdrop
+		const $backdrop = $('<div class="popup-backdrop">');
+		$('body').append($backdrop);
+		this.current_backdrop = $backdrop;
+		
+		// Focus on input
+		setTimeout(() => {
+			control.set_focus();
+		}, 50);
+		
+		// Setup event handlers
+		this.setup_popup_handlers($popup, $backdrop, control, column, data, fieldname, colIndex, rowIndex);
+	}
+
+	position_popup($popup, $cell) {
+		const cellOffset = $cell.offset();
+		const cellHeight = $cell.outerHeight();
+		const cellWidth = $cell.outerWidth();
+		const popupWidth = $popup.outerWidth();
+		const popupHeight = $popup.outerHeight();
+		const windowWidth = $(window).width();
+		const windowHeight = $(window).height();
+		const scrollTop = $(window).scrollTop();
+		
+		let top = cellOffset.top + cellHeight + 5; // 5px gap below cell
+		let left = cellOffset.left;
+		
+		// Check if popup extends beyond right edge
+		if (left + popupWidth > windowWidth - 20) {
+			left = windowWidth - popupWidth - 20;
+		}
+		
+		// Check if popup extends beyond left edge
+		if (left < 20) {
+			left = 20;
+		}
+		
+		// Check if popup extends beyond bottom edge - if so, show above cell
+		if (top + popupHeight > windowHeight + scrollTop - 20) {
+			top = cellOffset.top - popupHeight - 5; // 5px gap above cell
+		}
+		
+		// Ensure popup is not above viewport
+		if (top < scrollTop + 20) {
+			top = scrollTop + 20;
+		}
+		
+		$popup.css({
+			top: top + 'px',
+			left: left + 'px'
+		});
+	}
+
+	setup_popup_handlers($popup, $backdrop, control, column, data, fieldname, colIndex, rowIndex) {
+		// Save button handler
+		$popup.find('.btn-save').on('click', () => {
+			this.save_popup_value(control, column, data, fieldname, colIndex, rowIndex);
+		});
+		
+		// Close button handler
+		$popup.find('.btn-close').on('click', () => {
+			this.close_popup_editor(false);
+		});
+		
+		// Backdrop click handler - save and close
+		$backdrop.on('click', () => {
+			this.save_popup_value(control, column, data, fieldname, colIndex, rowIndex);
+		});
+		
+		// Keyboard handlers
+		$(document).on('keydown.popup-editor', (e) => {
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				this.close_popup_editor(false);
+			} else if (e.key === 'Enter' && !$(e.target).is('textarea')) {
+				// Save on Enter for non-textarea fields
+				e.preventDefault();
+				this.save_popup_value(control, column, data, fieldname, colIndex, rowIndex);
+			}
+		});
+	}
+
+	save_popup_value(control, column, data, fieldname, colIndex, rowIndex) {
+		const value = control.get_value();
+		const doctype = data.doctype || this.doctype;
+		const docname = data.name;
+		
+		// Show loading state
+		const $saveBtn = this.current_popup.find('.btn-save');
+		$saveBtn.prop('disabled', true).html(__("Saving..."));
+		
+		// Save the value
+		this.set_control_value(doctype, docname, fieldname, value)
+			.then((updated_doc) => {
+				// Update the data
+				const _data = this.data.find(d => d.name === updated_doc.name);
+				if (_data) {
+					for (let field in _data) {
+						if (field.includes(":")) {
+							// child table field
+							const [cdt, _field] = field.split(":");
+							const cdt_row = Object.keys(updated_doc)
+								.filter(
+									(key) =>
+										Array.isArray(updated_doc[key]) &&
+										updated_doc[key].length &&
+										updated_doc[key][0].doctype === cdt
+								)
+								.map((key) => updated_doc[key])[0]
+								?.filter((cdoc) => cdoc.name === _data[cdt + ":name"])[0];
+							if (cdt_row) {
+								_data[field] = cdt_row[_field];
+							}
+						} else {
+							_data[field] = updated_doc[field];
+						}
+					}
+				}
+				
+				// Refresh the row in datatable
+				const new_row = this.build_row(_data);
+				this.datatable.refreshRow(new_row, rowIndex);
+				
+				// Refresh charts if applicable
+				this.refresh_charts();
+				
+				// Show success indicator briefly
+				this.current_cell.addClass('cell-updated');
+				setTimeout(() => {
+					this.current_cell.removeClass('cell-updated');
+				}, 1000);
+				
+				// Close popup
+				this.close_popup_editor(true);
+			})
+			.catch((error) => {
+				// Show error in popup
+				$saveBtn.prop('disabled', false).html(__("Save"));
+				frappe.msgprint({
+					title: __('Error'),
+					message: error.message || __('Failed to save value'),
+					indicator: 'red'
+				});
+			});
+	}
+
+	close_popup_editor(saved) {
+		if (this.current_popup) {
+			this.current_popup.remove();
+			this.current_popup = null;
+		}
+		if (this.current_backdrop) {
+			this.current_backdrop.remove();
+			this.current_backdrop = null;
+		}
+		if (this.current_control) {
+			this.current_control = null;
+		}
+		if (this.current_cell) {
+			this.current_cell = null;
+		}
+		
+		// Remove keyboard event handlers
+		$(document).off('keydown.popup-editor');
+	}
+
+	show_readonly_popup(column, cell, $cell) {
+		// Create read-only popup
+		const $popup = $('<div class="report-inline-popup-editor readonly">');
+		
+		const $header = $(`
+			<div class="popup-header">
+				<span class="popup-title">${__(column.docfield.label || column.field)}</span>
+				<button class="btn-close" aria-label="Close">&times;</button>
+			</div>
+		`);
+		
+		const $body = $(`
+			<div class="popup-body">
+				<div class="readonly-value">${cell.content || ''}</div>
+				<div class="readonly-message text-muted">${__("Read-only - No edit permission")}</div>
+			</div>
+		`);
+		
+		$popup.append($header, $body);
+		$('body').append($popup);
+		
+		// Position popup
+		this.position_popup($popup, $cell);
+		$popup.addClass('show');
+		
+		// Add backdrop
+		const $backdrop = $('<div class="popup-backdrop">');
+		$('body').append($backdrop);
+		
+		// Close handlers
+		const closePopup = () => {
+			$popup.remove();
+			$backdrop.remove();
+			$(document).off('keydown.readonly-popup');
+		};
+		
+		$popup.find('.btn-close').on('click', closePopup);
+		$backdrop.on('click', closePopup);
+		$(document).on('keydown.readonly-popup', (e) => {
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				closePopup();
+			}
 		});
 	}
 
@@ -752,12 +1067,14 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 		[this.meta.title_field, this.meta.image_field].map(add_field);
 
 		// fields in_list_view or in_standard_filter
+		// Exclude Child Table (Table) fields from report view
 		const fields = this.meta.fields.filter((df) => {
 			return (
 				(df.in_list_view || df.in_standard_filter) &&
 				frappe.perm.has_perm(this.doctype, df.permlevel, "read") &&
 				frappe.model.is_value_type(df.fieldtype) &&
-				!df.report_hide
+				!df.report_hide &&
+				df.fieldtype !== "Table"  // Exclude Child Table fields
 			);
 		});
 
@@ -916,7 +1233,10 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 	get_columns_for_picker() {
 		let out = {};
 
-		const standard_fields_filter = (df) => !frappe.model.no_value_type.includes(df.fieldtype);
+		// Filter function - exclude Table fields and no_value_type fields
+		const standard_fields_filter = (df) => 
+			!frappe.model.no_value_type.includes(df.fieldtype) && 
+			df.fieldtype !== "Table";
 
 		let doctype_fields = frappe.meta
 			.get_docfields(this.doctype)
