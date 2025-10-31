@@ -106,6 +106,10 @@ class FormMeta(Meta):
 		if system_country:
 			self._add_code(_get_path(os.path.join("regional", system_country + "_list.js")), "__list_js")
 
+		self._add_code(_get_path(self.name + "_report.js"), "__report_js")
+		if system_country:
+			self._add_code(_get_path(os.path.join("regional", system_country + "_report.js")), "__report_js")
+
 		self._add_code(_get_path(self.name + "_calendar.js"), "__calendar_js")
 		self._add_code(_get_path(self.name + "_tree.js"), "__tree_js")
 
@@ -115,6 +119,7 @@ class FormMeta(Meta):
 
 		self.add_code_via_hook("doctype_js", "__js")
 		self.add_code_via_hook("doctype_list_js", "__list_js")
+		self.add_code_via_hook("doctype_report_js", "__report_js")
 		self.add_code_via_hook("doctype_tree_js", "__tree_js")
 		self.add_code_via_hook("doctype_calendar_js", "__calendar_js")
 		self.add_html_templates(path)

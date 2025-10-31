@@ -296,6 +296,7 @@ $.extend(frappe.model, {
 		for (const asset_key of [
 			"__list_js",
 			"__custom_list_js",
+			"__report_js",
 			"__calendar_js",
 			"__map_js",
 			"__tree_js",

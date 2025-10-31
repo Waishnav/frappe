@@ -8,6 +8,24 @@ from frappe.model import no_value_fields, table_fields
 from frappe.model.document import Document
 
 
+def _values_equal_for_diff(old_value, new_value) -> bool:
+	if old_value == new_value:
+		return True
+	if (old_value is None and new_value == "") or (old_value == "" and new_value is None):
+		return True
+	if isinstance(old_value, str) and isinstance(new_value, (int, float)):
+		try:
+			return float(old_value) == float(new_value)
+		except ValueError:
+			return False
+	if isinstance(new_value, str) and isinstance(old_value, (int, float)):
+		try:
+			return float(new_value) == float(old_value)
+		except ValueError:
+			return False
+	return False
+
+
 class Version(Document):
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
@@ -144,12 +162,17 @@ def get_diff(old, new, for_child=False, compare_cancelled=False):
 				if d.name not in found_rows:
 					out.removed.append([df.fieldname, d.as_dict()])
 
-		elif old_value != new_value:
+		elif not _values_equal_for_diff(old_value, new_value):
+			formatted_old, formatted_new = old_value, new_value
 			if df.fieldtype not in blacklisted_fields:
-				old_value = old.get_formatted(df.fieldname) if old_value else old_value
-				new_value = new.get_formatted(df.fieldname) if new_value else new_value
+				if formatted_old is not None:
+					formatted_old = old.get_formatted(df.fieldname)
+				if formatted_new is not None:
+					formatted_new = new.get_formatted(df.fieldname)
 
-			if old_value != new_value:
+				if _values_equal_for_diff(formatted_old, formatted_new):
+					continue
+
 				doctype = new.doctype or old.doctype
 				if doctype:
 					meta = frappe.get_meta(doctype)
@@ -164,17 +187,21 @@ def get_diff(old, new, for_child=False, compare_cancelled=False):
 							old_title_val, new_title_val = "", ""
 							result = frappe.db.get_values(
 								field_meta.options,
-								{"name": ("in", (old_value, new_value))},
+								{"name": ("in", (formatted_old, formatted_new))},
 								["name", title_field],
 							)
 							for r in result:
-								if r[0] == old_value:
+								if r[0] == formatted_old:
 									old_title_val = r[1]
-								elif r[0] == new_value:
+								elif r[0] == formatted_new:
 									new_title_val = r[1]
 							out.changed.append((df.fieldname, old_title_val, new_title_val))
 							continue
-				out.changed.append((df.fieldname, old_value, new_value))
+
+			old_value, new_value = formatted_old, formatted_new
+			if _values_equal_for_diff(old_value, new_value):
+				continue
+			out.changed.append((df.fieldname, old_value, new_value))
 
 	# name & docstatus
 	if not for_child:

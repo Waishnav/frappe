@@ -1,6 +1,7 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: MIT. See LICENSE
 import copy
+import json
 
 import frappe
 from frappe.core.doctype.version.version import get_diff
@@ -53,6 +54,93 @@ class TestVersion(IntegrationTestCase):
 		t.description = "changed"
 		t.save(ignore_version=False)
 		self.assertTrue(get_versions(t))
+
+	def test_child_table_blank_strings_not_tracked(self):
+		frappe.set_user("Administrator")
+		event = frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "Version Diff Test",
+				"starts_on": "2025-01-01 10:00:00",
+				"ends_on": "2025-01-01 11:00:00",
+				"event_type": "Public",
+				"color": "#abcdef",
+				"event_participants": [
+					{
+						"reference_doctype": "User",
+						"reference_docname": "Administrator",
+					}
+				],
+			}
+		).insert()
+
+		self.addCleanup(
+			lambda: frappe.delete_doc(
+				"Event", event.name, ignore_permissions=True, delete_permanently=True
+			)
+		)
+
+		frappe.db.delete("Version", {"ref_doctype": "Event", "docname": event.name})
+
+		doc_dict = copy.deepcopy(event.as_dict())
+		doc_dict["subject"] = "Version Diff Test - Updated"
+		doc_dict["event_participants"][0]["email"] = ""
+
+		updated_event = frappe.get_doc(doc_dict)
+		updated_event.save()
+
+		version = frappe.get_all(
+			"Version",
+			fields=["name", "data"],
+			filters={"ref_doctype": "Event", "docname": event.name},
+			order_by="creation desc",
+			limit=1,
+		)[0]
+
+		version_data = json.loads(version["data"])
+		self.assertIn(
+			"subject",
+			[field_change[0] for field_change in version_data.get("changed", [])],
+		)
+		row_changes = version_data.get("row_changed") or []
+		self.assertTrue(
+			all(
+				all(field_change[0] != "email" for field_change in row[3]) for row in row_changes
+			)
+		)
+
+	def test_numeric_string_equivalence_not_tracked(self):
+		frappe.set_user("Administrator")
+		event = frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "Numeric Version Diff Test",
+				"starts_on": "2025-02-01 09:00:00",
+				"ends_on": "2025-02-01 10:00:00",
+				"event_type": "Public",
+				"color": "6",
+			}
+		).insert()
+
+		self.addCleanup(
+			lambda: frappe.delete_doc(
+				"Event", event.name, ignore_permissions=True, delete_permanently=True
+			)
+		)
+
+		frappe.db.delete("Version", {"ref_doctype": "Event", "docname": event.name})
+
+		doc_dict = copy.deepcopy(event.as_dict())
+		doc_dict["color"] = 6
+
+		updated_event = frappe.get_doc(doc_dict)
+		updated_event.save()
+
+		versions = frappe.get_all(
+			"Version",
+			filters={"ref_doctype": "Event", "docname": event.name},
+		)
+		self.assertFalse(versions)
 
 
 def get_fieldnames(change_array):

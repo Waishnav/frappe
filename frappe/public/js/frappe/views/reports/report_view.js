@@ -2,6 +2,7 @@
  * frappe.views.ReportView
  */
 import DataTable from "frappe-datatable";
+import "../ui/inline_editor_popover.js";
 
 window.DataTable = DataTable;
 frappe.provide("frappe.views");
@@ -76,7 +77,26 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 		this.setup_charts_area();
 		this.$datatable_wrapper = $('<div class="datatable-wrapper">');
 		this.$result.append(this.$datatable_wrapper);
+		
+		// Load doctype-specific report.js config
+		this.load_doctype_report_config();
+		
 		this.settings.onload && this.settings.onload(this);
+		if (this.report_settings && this.report_settings.onload) {
+			this.report_settings.onload(this);
+		}
+	}
+
+	load_doctype_report_config() {
+		// Check if doctype has report-specific config (similar to list.js)
+		// This will be loaded via meta.__report_js which sets frappe.reportview_settings
+		// Initialize reportview_settings namespace if it doesn't exist
+		if (!frappe.reportview_settings) {
+			frappe.reportview_settings = {};
+		}
+		
+		// Check for reportview_settings (similar to listview_settings)
+		this.report_settings = frappe.reportview_settings[this.doctype] || {};
 	}
 
 	setup_charts_area() {
@@ -213,6 +233,11 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 			this.refresh_charts();
 		}
 
+		// Call refresh hook if available
+		if (this.report_settings && this.report_settings.refresh) {
+			this.report_settings.refresh(this);
+		}
+
 		if (this.datatable && !force) {
 			this.datatable.refresh(this.get_data(this.data), this.columns);
 			return;
@@ -294,15 +319,18 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 
 	setup_datatable(values) {
 		this.$datatable_wrapper.empty();
-		this.datatable = new DataTable(this.$datatable_wrapper[0], {
+		
+		// Get datatable options, potentially customized by report_settings
+		let datatable_options = {
 			columns: this.columns,
 			data: this.get_data(values),
-			getEditor: this.get_editing_object.bind(this),
+			getEditor: null, // Disable default double-click editing
 			language: frappe.boot.lang,
 			translations: frappe.utils.datatable.get_translations(),
 			checkboxColumn: true,
 			inlineFilters: true,
-			cellHeight: 35,
+			cellHeight: 45,
+			dynamicRowHeight: false,
 			direction: frappe.utils.is_rtl() ? "rtl" : "ltr",
 			events: {
 				onRemoveColumn: (column) => {
@@ -391,7 +419,136 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 					},
 				},
 			],
+		};
+
+		// Allow report_settings to customize datatable options
+		if (this.report_settings && this.report_settings.get_datatable_options) {
+			datatable_options = this.report_settings.get_datatable_options(this, datatable_options) || datatable_options;
+		}
+
+		this.datatable = new DataTable(this.$datatable_wrapper[0], datatable_options);
+		
+		// Setup cell click handlers after datatable is created
+		this.setup_cell_click_handlers();
+	}
+
+	setup_cell_click_handlers() {
+		const me = this;
+		
+		// Use event delegation on the datatable wrapper
+		this.$datatable_wrapper.on("click", ".dt-cell", function(e) {
+			// Don't trigger on header cells, checkbox cells, or totals row
+			const $cell = $(this);
+			if ($cell.closest(".dt-header").length || 
+			    $cell.hasClass("dt-cell--checkbox") ||
+			    $cell.closest(".dt-row-totalRow").length) {
+				return;
+			}
+
+			// Get row and column indices from data attributes or DOM structure
+			const $row = $cell.closest(".dt-row");
+			const rowIndex = parseInt($row.attr("data-row-index"), 10);
+			if (isNaN(rowIndex)) return;
+
+			// Get column index from cell data attribute or by finding its position
+			let colIndex = parseInt($cell.attr("data-col-index"), 10);
+			if (isNaN(colIndex)) {
+				// Fallback: find column index by position
+				colIndex = $row.find(".dt-cell").index($cell);
+				if (colIndex === -1) return;
+			}
+
+			const column = me.datatable.getColumn(colIndex);
+			if (!column || !column.docfield) return;
+			
+			// Skip if this is a totals row
+			const rowData = me.datatable.datamanager.data[rowIndex];
+			if (rowData && rowData.name === __("Totals Row")) {
+				return;
+			}
+
+			// Get the actual row data from our data array
+			const docData = me.data[rowIndex];
+			if (!docData) return;
+
+			const fielddef = column.docfield;
+
+			// Get current value
+			let currentValue = docData[column.id];
+			
+			// For child table fields
+			if (column.id.includes(":")) {
+				const [cdt, field] = column.id.split(":");
+				currentValue = docData[`${cdt}:${field}`];
+			}
+
+			// Determine if user can write
+			const canWrite = me.is_editable(fielddef, docData);
+
+			// Open the inline popup editor
+			me.open_inline_popup_editor({
+				docname: docData.name,
+				doctype: column.docfield.parent || me.doctype,
+				fielddef: fielddef,
+				currentValue: currentValue,
+				cellElement: this,
+				canWrite: canWrite,
+				rowIndex: rowIndex,
+				columnId: column.id,
+				onSave: (newValue) => {
+					return me.save_cell_value(docData.name, column.docfield.parent || me.doctype, fielddef.fieldname, newValue, rowIndex, column.id);
+				}
+			});
 		});
+	}
+
+	open_inline_popup_editor(opts) {
+		frappe.ui.inline_editor.open(opts);
+	}
+
+	save_cell_value(docname, doctype, fieldname, value, rowIndex, columnId) {
+		return this.set_control_value(doctype, docname, fieldname, value)
+			.then((updated_doc) => {
+				// Update in-memory data
+				const _data = this.data
+					.filter((b) => b.name === updated_doc.name)
+					.find(
+						(a) =>
+							// child table cell
+							(doctype != updated_doc.doctype &&
+								a[doctype + ":name"] == docname) ||
+							doctype == updated_doc.doctype
+					);
+
+				if (_data) {
+					// Update the field value in our data
+					if (columnId.includes(":")) {
+						// child table field
+						const [cdt, _field] = columnId.split(":");
+						const cdt_row = Object.keys(updated_doc)
+							.filter(
+								(key) =>
+									Array.isArray(updated_doc[key]) &&
+									updated_doc[key].length &&
+									updated_doc[key][0].doctype === cdt
+							)
+							.map((key) => updated_doc[key])[0]
+							.filter((cdoc) => cdoc.name == _data[cdt + ":name"])[0];
+						if (cdt_row) {
+							_data[columnId] = cdt_row[_field];
+						}
+					} else {
+						_data[fieldname] = updated_doc[fieldname];
+					}
+				}
+
+				// Refresh the specific cell in the datatable
+				const new_row = this.build_row(_data);
+				this.datatable.refreshRow(new_row, rowIndex);
+
+				// Refresh charts if needed
+				this.refresh_charts();
+			});
 	}
 
 	toggle_charts() {
@@ -916,7 +1073,11 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 	get_columns_for_picker() {
 		let out = {};
 
-		const standard_fields_filter = (df) => !frappe.model.no_value_type.includes(df.fieldtype);
+		const standard_fields_filter = (df) => {
+			// Exclude Table fieldtype, but include Table MultiSelect
+			return !frappe.model.no_value_type.includes(df.fieldtype) && 
+			       df.fieldtype !== "Table";
+		};
 
 		let doctype_fields = frappe.meta
 			.get_docfields(this.doctype)
@@ -1040,6 +1201,12 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 		this.columns_map = {};
 
 		for (let f of this.fields) {
+			// Skip Table fieldtype columns
+			const df = frappe.meta.get_docfield(f[1] || this.doctype, f[0]);
+			if (df && df.fieldtype === "Table") {
+				continue;
+			}
+
 			let column;
 			if (f[0] !== "docstatus") {
 				column = this.build_column(f);
@@ -1148,17 +1315,38 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 			};
 		}
 
-		return {
-			id: id,
-			field: fieldname,
-			name: title,
-			content: title,
-			docfield,
-			width,
-			editable,
-			align,
-			compareValue: compareFn,
-			format: (value, row, column, data) => {
+		// Custom formatter for Table MultiSelect fields
+		let customFormatter = null;
+		if (docfield.fieldtype === "Table MultiSelect") {
+			customFormatter = (value, row, column, data) => {
+				let doc = null;
+				if (Array.isArray(row)) {
+					doc = row.reduce((acc, curr) => {
+						if (!curr.column.docfield) return acc;
+						acc[curr.column.docfield.fieldname] = curr.content;
+						return acc;
+					}, {});
+				} else {
+					doc = row;
+				}
+
+				// Count selected rows
+				const rows = value || [];
+				const count = Array.isArray(rows) ? rows.length : 0;
+				const fieldLabel = docfield.label || fieldname;
+
+				// Generate pill HTML
+				let pillText;
+				if (count === 0) {
+					pillText = `+ Assign ${fieldLabel}`;
+				} else {
+					pillText = `${count} ${fieldLabel}${count === 1 ? '' : '(s)'}`;
+				}
+
+				return `<span class="table-multiselect-pill">${frappe.utils.escape_html(pillText)}</span>`;
+			};
+		} else {
+			customFormatter = (value, row, column, data) => {
 				let doc = null;
 				if (Array.isArray(row)) {
 					doc = row.reduce((acc, curr) => {
@@ -1171,7 +1359,32 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 				}
 
 				return frappe.format(value, column.docfield, { always_show_decimals: true }, doc);
-			},
+			};
+		}
+
+		// Allow report_settings to override formatter
+		const defaultFormatter = customFormatter;
+		customFormatter = (value, row, column, data) => {
+			if (this.report_settings && this.report_settings.formatter) {
+				const customFormatted = this.report_settings.formatter(row, column.id, value, column, data, defaultFormatter);
+				if (customFormatted !== undefined) {
+					return customFormatted;
+				}
+			}
+			return defaultFormatter(value, row, column, data);
+		};
+
+		return {
+			id: id,
+			field: fieldname,
+			name: title,
+			content: title,
+			docfield,
+			width,
+			editable,
+			align,
+			compareValue: compareFn,
+			format: customFormatter,
 		};
 	}
 
