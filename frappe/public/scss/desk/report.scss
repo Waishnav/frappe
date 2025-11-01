@@ -297,3 +297,121 @@
 .input-group > * {
 	margin-right: 10px;
 }
+
+// Inline Popup Editor Styles
+.report-inline-popup-editor {
+	position: absolute;
+	z-index: 1050;
+	background: white;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md);
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+	min-width: 300px;
+	max-width: 500px;
+	display: none;
+
+	&.show {
+		display: block;
+	}
+
+	&.readonly {
+		.popup-body {
+			padding: var(--padding-md);
+		}
+
+		.readonly-value {
+			margin-bottom: var(--margin-sm);
+			font-weight: 500;
+		}
+
+		.readonly-message {
+			font-size: var(--text-sm);
+		}
+	}
+
+	.popup-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: var(--padding-sm) var(--padding-md);
+		border-bottom: 1px solid var(--border-color);
+		background: var(--bg-color);
+		border-radius: var(--border-radius-md) var(--border-radius-md) 0 0;
+
+		.popup-title {
+			font-weight: 600;
+			font-size: var(--text-md);
+			color: var(--text-color);
+		}
+
+		.btn-close {
+			background: none;
+			border: none;
+			font-size: 24px;
+			line-height: 1;
+			color: var(--text-muted);
+			cursor: pointer;
+			padding: 0;
+			width: 24px;
+			height: 24px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+
+			&:hover {
+				color: var(--text-color);
+			}
+		}
+	}
+
+	.popup-body {
+		padding: var(--padding-md);
+
+		.frappe-control {
+			margin-bottom: 0;
+		}
+
+		input,
+		textarea,
+		select {
+			width: 100%;
+		}
+	}
+
+	.popup-footer {
+		padding: var(--padding-sm) var(--padding-md);
+		border-top: 1px solid var(--border-color);
+		display: flex;
+		justify-content: flex-end;
+		background: var(--bg-color);
+		border-radius: 0 0 var(--border-radius-md) var(--border-radius-md);
+
+		.btn-save {
+			min-width: 80px;
+		}
+	}
+}
+
+.popup-backdrop {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	background: rgba(0, 0, 0, 0.1);
+	z-index: 1049;
+}
+
+// Cell updated indicator
+.dt-cell.cell-updated {
+	background-color: var(--bg-green) !important;
+}
+
+// Hover state for editable cells
+.dt-cell:not(.dt-cell--header):not(.dt-cell--col-0):not(.dt-cell--highlight) {
+	cursor: pointer;
+
+	&:hover {
+		background-color: var(--bg-light-gray) !important;
+	}
+}
