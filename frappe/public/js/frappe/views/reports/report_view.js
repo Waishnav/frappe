@@ -20,6 +20,9 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 		this.page_title = __("Report:") + " " + this.page_title;
 		this.view = "Report";
 
+		// Load report-specific settings similar to list view
+		this.report_settings = frappe.reportview_settings && frappe.reportview_settings[this.doctype] || {};
+
 		const route = frappe.get_route();
 		if (route.length === 4) {
 			this.report_name = route[3];
@@ -76,7 +79,10 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 		this.setup_charts_area();
 		this.$datatable_wrapper = $('<div class="datatable-wrapper">');
 		this.$result.append(this.$datatable_wrapper);
+		
+		// Call report-specific onload hook if available
 		this.settings.onload && this.settings.onload(this);
+		this.report_settings.onload && this.report_settings.onload(this);
 	}
 
 	setup_charts_area() {
@@ -215,9 +221,14 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 
 		if (this.datatable && !force) {
 			this.datatable.refresh(this.get_data(this.data), this.columns);
+			// Call report-specific refresh hook if available
+			this.report_settings.refresh && this.report_settings.refresh(this);
 			return;
 		}
 		this.setup_datatable(this.data);
+		
+		// Call report-specific refresh hook if available
+		this.report_settings.refresh && this.report_settings.refresh(this);
 	}
 
 	get_count_element() {
@@ -294,7 +305,9 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 
 	setup_datatable(values) {
 		this.$datatable_wrapper.empty();
-		this.datatable = new DataTable(this.$datatable_wrapper[0], {
+		
+		// Base datatable options
+		let datatable_options = {
 			columns: this.columns,
 			data: this.get_data(values),
 			getEditor: false, // Disable default inline editing
@@ -391,7 +404,17 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 					},
 				},
 			],
-		});
+		};
+
+		// Allow report-specific customization of datatable options
+		if (this.report_settings.get_datatable_options) {
+			datatable_options = Object.assign(
+				datatable_options,
+				this.report_settings.get_datatable_options(this) || {}
+			);
+		}
+
+		this.datatable = new DataTable(this.$datatable_wrapper[0], datatable_options);
 
 		// Setup inline popup editing
 		this.setup_inline_editing();
@@ -1303,6 +1326,38 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 			};
 		}
 
+		// Default formatter
+		const defaultFormatter = (value, row, column, data) => {
+			let doc = null;
+			if (Array.isArray(row)) {
+				doc = row.reduce((acc, curr) => {
+					if (!curr.column.docfield) return acc;
+					acc[curr.column.docfield.fieldname] = curr.content;
+					return acc;
+				}, {});
+			} else {
+				doc = row;
+			}
+
+			return frappe.format(value, column.docfield, { always_show_decimals: true }, doc);
+		};
+
+		// Allow report-specific formatter override
+		let finalFormatter = customFormat || defaultFormatter;
+		if (this.report_settings.formatter) {
+			finalFormatter = (value, row, column, data) => {
+				// Call the custom formatter with access to default formatter
+				return this.report_settings.formatter(
+					row, 
+					column, 
+					value, 
+					column, 
+					data, 
+					customFormat || defaultFormatter
+				);
+			};
+		}
+
 		return {
 			id: id,
 			field: fieldname,
@@ -1313,20 +1368,7 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 			editable,
 			align,
 			compareValue: compareFn,
-			format: customFormat || ((value, row, column, data) => {
-				let doc = null;
-				if (Array.isArray(row)) {
-					doc = row.reduce((acc, curr) => {
-						if (!curr.column.docfield) return acc;
-						acc[curr.column.docfield.fieldname] = curr.content;
-						return acc;
-					}, {});
-				} else {
-					doc = row;
-				}
-
-				return frappe.format(value, column.docfield, { always_show_decimals: true }, doc);
-			}),
+			format: finalFormatter,
 		};
 	}
 
