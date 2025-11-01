@@ -297,7 +297,7 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 		this.datatable = new DataTable(this.$datatable_wrapper[0], {
 			columns: this.columns,
 			data: this.get_data(values),
-			getEditor: this.get_editing_object.bind(this),
+			getEditor: false, // Disable default inline editing
 			language: frappe.boot.lang,
 			translations: frappe.utils.datatable.get_translations(),
 			checkboxColumn: true,
@@ -392,6 +392,148 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 				},
 			],
 		});
+
+		// Setup inline popup editing
+		this.setup_inline_editing();
+	}
+
+	setup_inline_editing() {
+		// Initialize the inline editor popover (singleton)
+		if (!this.inline_editor) {
+			this.inline_editor = new frappe.ui.InlineEditorPopover();
+		}
+
+		// Add click handlers to cells
+		this.$datatable_wrapper.on('click', '.dt-cell', (e) => {
+			// Don't trigger on checkbox column
+			if ($(e.currentTarget).hasClass('dt-cell--col-0')) {
+				return;
+			}
+
+			const $cell = $(e.currentTarget);
+			const colIndex = $cell.index();
+			const rowIndex = $cell.parent().index();
+
+			// Get column and row data
+			const column = this.datatable.getColumn(colIndex);
+			if (!column || !column.docfield) {
+				return;
+			}
+
+			// Skip if this is the totals row
+			if (rowIndex >= this.data.length) {
+				return;
+			}
+
+			const rowData = this.data[rowIndex];
+			const fieldname = column.docfield.fieldname;
+			const doctype = column.docfield.parent;
+
+			// Get current value
+			let currentValue;
+			if (doctype !== this.doctype) {
+				// Child table field
+				currentValue = rowData[`${doctype}:${fieldname}`];
+			} else {
+				currentValue = rowData[fieldname];
+			}
+
+			// Check permissions
+			const canWrite = this.is_editable(column.docfield, rowData);
+
+			// Open inline editor
+			this.open_inline_popup_editor({
+				docname: rowData.name,
+				fielddef: column.docfield,
+				currentValue: currentValue,
+				cellElement: e.currentTarget,
+				canWrite: canWrite,
+				doctype: doctype,
+				doc: rowData,
+				onSave: (newValue) => this.handle_inline_save(rowData, column, newValue, rowIndex, colIndex)
+			});
+		});
+	}
+
+	open_inline_popup_editor(options) {
+		this.inline_editor.open(options);
+	}
+
+	handle_inline_save(rowData, column, newValue, rowIndex, colIndex) {
+		const fieldname = column.docfield.fieldname;
+		const doctype = column.docfield.parent;
+		const docname = doctype !== this.doctype 
+			? rowData[`${doctype}:name`] 
+			: rowData.name;
+
+		// Save to server
+		this.set_control_value(doctype, docname, fieldname, newValue)
+			.then((updated_doc) => {
+				// Update in-memory data
+				const _data = this.data.find((d) => d.name === rowData.name);
+				
+				if (doctype !== this.doctype) {
+					// Child table field
+					_data[`${doctype}:${fieldname}`] = newValue;
+				} else {
+					_data[fieldname] = newValue;
+				}
+
+				// Update cell display
+				this.update_cell_display(rowIndex, colIndex, _data, column);
+
+				// Refresh charts if needed
+				this.refresh_charts();
+
+				frappe.show_alert({
+					message: __('Updated'),
+					indicator: 'green'
+				});
+			})
+			.catch((err) => {
+				frappe.show_alert({
+					message: __('Failed to update'),
+					indicator: 'red'
+				});
+			});
+	}
+
+	update_cell_display(rowIndex, colIndex, rowData, column) {
+		const fieldname = column.docfield.fieldname;
+		const doctype = column.docfield.parent;
+		
+		let value;
+		if (doctype !== this.doctype) {
+			value = rowData[`${doctype}:${fieldname}`];
+		} else {
+			value = rowData[fieldname];
+		}
+
+		// Format the value for display
+		let formatted;
+		if (column.docfield.fieldtype === 'Table MultiSelect') {
+			// Special formatting for Table MultiSelect
+			formatted = this.format_table_multiselect(value, column.docfield);
+		} else {
+			formatted = frappe.format(value, column.docfield, { always_show_decimals: true }, rowData);
+		}
+
+		// Update the cell content
+		const cell = this.datatable.getCell(colIndex, rowIndex);
+		if (cell && cell.node) {
+			cell.node.innerHTML = formatted;
+		}
+	}
+
+	format_table_multiselect(value, docfield) {
+		const count = Array.isArray(value) ? value.length : 0;
+		const label = docfield.label || docfield.fieldname;
+		
+		if (count === 0) {
+			return `<span class="text-muted pill">+ ${__('Assign')} ${__(label)}</span>`;
+		} else {
+			return `<span class="pill">${count} ${__(label)}(s)</span>`;
+		}
 	}
 
 	toggle_charts() {
@@ -1104,6 +1246,11 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 		}
 		if (!docfield || docfield.report_hide) return;
 
+		// Skip pure Table fields (not Table MultiSelect)
+		if (docfield.fieldtype === "Table") {
+			return;
+		}
+
 		let title = __(docfield.label, null, docfield.parent);
 		if (doctype !== this.doctype) {
 			title += ` (${__(doctype)})`;
@@ -1148,6 +1295,14 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 			};
 		}
 
+		// Custom formatter for Table MultiSelect
+		let customFormat = null;
+		if (docfield.fieldtype === 'Table MultiSelect') {
+			customFormat = (value, row, column, data) => {
+				return this.format_table_multiselect(value, docfield);
+			};
+		}
+
 		return {
 			id: id,
 			field: fieldname,
@@ -1158,7 +1313,7 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 			editable,
 			align,
 			compareValue: compareFn,
-			format: (value, row, column, data) => {
+			format: customFormat || ((value, row, column, data) => {
 				let doc = null;
 				if (Array.isArray(row)) {
 					doc = row.reduce((acc, curr) => {
@@ -1171,7 +1326,7 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 				}
 
 				return frappe.format(value, column.docfield, { always_show_decimals: true }, doc);
-			},
+			}),
 		};
 	}
 

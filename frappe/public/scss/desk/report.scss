@@ -297,3 +297,19 @@
 .input-group > * {
 	margin-right: 10px;
 }
+
+// Pill styling for Table MultiSelect in Report View
+.report-view {
+	.pill {
+		display: inline-block;
+		padding: 2px 8px;
+		border-radius: 4px;
+		background-color: var(--bg-light-gray);
+		border: 1px solid var(--border-color);
+		font-size: 12px;
+		
+		&.text-muted {
+			color: var(--text-muted);
+		}
+	}
+}
