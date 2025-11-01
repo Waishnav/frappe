@@ -1029,10 +1029,9 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 			!df.hidden &&
 			// not a standard field i.e., owner, modified_by, etc.
 			frappe.model.is_non_std_field(df.fieldname) &&
-			// don't check read_only_depends_on if there's child table fields
-			!this.meta.fields.some((df) => df.fieldtype === "Table") &&
-			df.read_only_depends_on &&
-			!this.evaluate_read_only_depends_on(df.read_only_depends_on, data)
+			// check read_only_depends_on if it exists
+			(!df.read_only_depends_on || 
+				!this.evaluate_read_only_depends_on(df.read_only_depends_on, data))
 		);
 	}
 
@@ -1514,6 +1513,8 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 				const parsed = JSON.parse(value);
 				count = Array.isArray(parsed) ? parsed.length : 0;
 			} catch (e) {
+				// Log parsing error for debugging
+				console.warn('Failed to parse Table MultiSelect value:', value, e);
 				count = 0;
 			}
 		}
@@ -1523,10 +1524,12 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 		}
 
 		const label = docfield.label || docfield.fieldname;
-		const pluralLabel = count === 1 ? label : (label + 's');
+		// Simple pluralization - for exact count display, we show the count explicitly
+		// so "1 Item" vs "2 Items" is clear regardless of irregular plurals
+		const displayText = count === 1 ? label : label;
 		
-		return `<span class="table-multiselect-pill" title="${count} ${pluralLabel}">
-			<span class="pill-count">${count}</span> ${pluralLabel}
+		return `<span class="table-multiselect-pill" title="${count} ${displayText}">
+			<span class="pill-count">${count}</span> ${displayText}
 		</span>`;
 	}
 
