@@ -1490,9 +1490,44 @@ frappe.views.ReportView = class ReportView extends frappe.views.ListView {
 					doc = row;
 				}
 
+				// Special handling for Table MultiSelect fields - show as pill with count
+				if (column.docfield.fieldtype === "Table MultiSelect") {
+					return this.format_table_multiselect(value, column.docfield);
+				}
+
 				return frappe.format(value, column.docfield, { always_show_decimals: true }, doc);
 			},
 		};
+	}
+
+	format_table_multiselect(value, docfield) {
+		// Format Table MultiSelect field as "X [Field Name](s)" pill
+		if (!value || (Array.isArray(value) && value.length === 0)) {
+			return '<span class="text-muted">—</span>';
+		}
+
+		let count = 0;
+		if (Array.isArray(value)) {
+			count = value.length;
+		} else if (typeof value === 'string') {
+			try {
+				const parsed = JSON.parse(value);
+				count = Array.isArray(parsed) ? parsed.length : 0;
+			} catch (e) {
+				count = 0;
+			}
+		}
+
+		if (count === 0) {
+			return '<span class="text-muted">—</span>';
+		}
+
+		const label = docfield.label || docfield.fieldname;
+		const pluralLabel = count === 1 ? label : (label + 's');
+		
+		return `<span class="table-multiselect-pill" title="${count} ${pluralLabel}">
+			<span class="pill-count">${count}</span> ${pluralLabel}
+		</span>`;
 	}
 
 	build_rows(data) {

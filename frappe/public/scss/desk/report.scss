@@ -415,3 +415,27 @@
 		background-color: var(--bg-light-gray) !important;
 	}
 }
+
+// Table MultiSelect pill styling
+.table-multiselect-pill {
+	display: inline-flex;
+	align-items: center;
+	padding: 2px 8px;
+	background: var(--bg-light-blue);
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-sm);
+	font-size: var(--text-sm);
+	color: var(--text-color);
+	cursor: pointer;
+
+	&:hover {
+		background: var(--primary-light);
+		border-color: var(--primary);
+	}
+
+	.pill-count {
+		font-weight: 600;
+		margin-right: 4px;
+		color: var(--primary);
+	}
+}
