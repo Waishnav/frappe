@@ -401,6 +401,10 @@ class BaseDocument:
 							eval_locals={"doc": self},
 						)
 
+				# Normalize JSON field values that may arrive as dict/list (e.g. on PostgreSQL)
+				if df.fieldtype == "JSON" and isinstance(value, (dict, list)):
+					value = json.dumps(value, separators=(",", ":"))
+
 				if isinstance(value, list) and df.fieldtype not in table_fields:
 					frappe.throw(_("Value for {0} cannot be a list").format(_(df.label, context=df.parent)))
 
